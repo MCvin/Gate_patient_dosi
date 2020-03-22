@@ -1,0 +1,122 @@
+#-----------------------------------------------------------------------#
+# GATE macro for patient dosimetry from CT and SPECT                    #
+#                                                                       #
+# Author: Maxime Chauvin, maxime.chauvin@inserm.fr                      #
+# Last revision: 22-03-2020                                             #
+#                                                                       #
+# Usage example:                                                        #
+#   Gate -a [nb,1e5][job,1] mac/main.mac                                #
+#                                                                       #
+# Inputs:                                                               #
+#   - data/GateMaterials.db                                             #
+#   - data/patient_CT.mhd                                               #
+#   - data/patient_CT.raw                                               #
+#   - data/patient_SPECT.mhd                                            #
+#   - data/patient_SPECT.raw                                            #
+#   - data/Schneider2000DensitiesTable.txt                              #
+#   - data/Schneider2000MaterialsTable.txt                              #
+#                                                                       #
+# Outputs:                                                              #
+#   - output/{job}_patient-Dose.mhd                                     #
+#   - output/{job}_patient-Dose.raw                                     #
+#   - output/{job}_patient-Dose-Squared.mhd                             #
+#   - output/{job}_patient-Dose-Squared.raw                             #
+#   - output/{job}_patient-Dose-Uncertainty.mhd                         #
+#   - output/{job}_patient-Dose-Uncertainty.raw                         #
+#   - output/{job}_stats.txt                                            #
+#-----------------------------------------------------------------------#
+
+#=====================================================
+# GEOMETRY
+#=====================================================
+
+/gate/geometry/setMaterialDatabase                                  data/GateMaterials.db
+
+# world
+/gate/world/setMaterial                                             Air
+/gate/world/geometry/setXLength                                     1000 mm
+/gate/world/geometry/setYLength                                     1000 mm
+/gate/world/geometry/setZLength                                     2000 mm
+
+# HU to materials conversion
+/gate/HounsfieldMaterialGenerator/SetMaterialTable                  data/Schneider2000MaterialsTable.txt
+/gate/HounsfieldMaterialGenerator/SetDensityTable                   data/Schneider2000DensitiesTable.txt
+/gate/HounsfieldMaterialGenerator/SetDensityTolerance               0.1 g/cm3
+/gate/HounsfieldMaterialGenerator/SetOutputMaterialDatabaseFilename data/patient-HUmaterials.db
+/gate/HounsfieldMaterialGenerator/SetOutputHUMaterialFilename       data/patient-HU2mat.txt
+/gate/HounsfieldMaterialGenerator/Generate
+
+# Patient
+/gate/world/daughters/name                                          patient
+/gate/world/daughters/insert                                        ImageNestedParametrisedVolume
+/gate/geometry/setMaterialDatabase                                  data/patient-HUmaterials.db
+/gate/patient/geometry/setHUToMaterialFile                          data/patient-HU2mat.txt
+/gate/patient/geometry/setImage                                     data/patient_CT.mhd
+
+#=====================================================
+# PHYSICS
+#=====================================================
+
+/gate/physics/addPhysicsList                                      emlivermore
+/gate/physics/addProcess                                          RadioactiveDecay
+/gate/physics/processes/PhotoElectric/setAugerElectron            true
+
+/gate/physics/Gamma/SetCutInRegion                                world 10.0 mm
+/gate/physics/Electron/SetCutInRegion                             world 10.0 mm
+/gate/physics/Positron/SetCutInRegion                             world 10.0 mm
+
+/gate/physics/Gamma/SetCutInRegion                                patient 0.1 mm
+/gate/physics/Electron/SetCutInRegion                             patient 0.1 mm
+/gate/physics/Positron/SetCutInRegion                             patient 0.1 mm
+
+/gate/physics/displayCuts
+
+#=====================================================
+# DETECTORS
+#=====================================================
+
+/gate/actor/addActor                                              DoseActor  dose3D
+/gate/actor/dose3D/attachTo                                       patient
+/gate/actor/dose3D/stepHitType                                    random
+/gate/actor/dose3D/setResolution                                  110 110 220
+/gate/actor/dose3D/enableDose                                     true
+/gate/actor/dose3D/enableSquaredDose                              true
+/gate/actor/dose3D/enableUncertaintyDose                          true
+/gate/actor/dose3D/save                                           output/{job}_patient.mhd
+
+/gate/actor/addActor                                              SimulationStatisticActor stat
+/gate/actor/stat/save                                             output/{job}_stats.txt
+/gate/actor/stat/saveEveryNSeconds                                60
+
+#=====================================================
+# VISUALISATION
+#=====================================================
+
+#/vis/open                                                         OGLI
+#/vis/drawVolume
+#/vis/scene/add/trajectories
+#/vis/scene/endOfEventAction                                       accumulate
+
+#=====================================================
+# INITIALISATION
+#=====================================================
+
+/gate/run/initialize
+/gate/random/setEngineName                                        MersenneTwister
+/gate/random/setEngineSeed                                        auto
+/gate/random/verbose                                              1
+
+#=====================================================
+# SOURCE
+#=====================================================
+
+# Source activity distribution from patient SPECT
+/control/execute                                                  mac/source.mac
+
+#=====================================================
+# APPLICATION
+#=====================================================
+
+/gate/application/setTotalNumberOfPrimaries                       {nb}
+/gate/application/start
+
